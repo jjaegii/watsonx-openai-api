@@ -43,6 +43,42 @@ def get_bearer_token():
         logger.error(f"Bearer Token 요청 실패: {e}")
         return None
 
+@app.get("/v1/models")
+async def fetch_models():
+    logger.info("Fetching model list.")
+    BEARER_TOKEN = get_bearer_token()
+    if not BEARER_TOKEN:
+        raise HTTPException(status_code=500, detail="watsonx.ai Bearer Token을 가져오는 데 실패했습니다.")
+    
+    try:
+        headers = {
+            "Authorization": f"Bearer {BEARER_TOKEN}",
+            "Content-Type": "application/json",
+            "Accept": "application/json"
+        }
+        response = requests.get(f"{BASE_URL}/ml/v1/foundation_model_specs?version=2023-05-29", headers=headers)
+        response.raise_for_status()
+        models_data = response.json()
+        logger.debug(f"Models fetched: {json.dumps(models_data, indent=4)}")
+
+        # OpenAI 호환 형식으로 변환
+        models = []
+        for model in models_data.get("resources", []):
+            # model_limits가 없을 경우 기본값 설정
+            model_limits = model.get("model_limits", {"max_output_tokens": 2000, "max_sequence_length": 4096})
+            models.append({
+                "id": model["model_id"],
+                "object": "model",
+                "created": int(time.time()),
+                "owned_by": "ibm",
+                "description": model.get("short_description", ""),
+                "max_tokens": model_limits.get("max_output_tokens", 2000),
+            })
+
+        return {"data": models}
+    except Exception as err:
+        logger.error(f"Error fetching models: {err}")
+        raise HTTPException(status_code=500, detail=f"Error fetching models: {err}")
 
 @app.post("/v1/chat/completions")
 async def watsonx_completions(request: Request):
@@ -103,17 +139,21 @@ async def watsonx_completions(request: Request):
             table_str = "N/A"
 
         prompt = f"""<|begin_of_text|><|start_header_id|>system<|end_header_id|>
-        You are an assistant for question - answering tasks.
-        Please answer in Korean.
-        Use the following pieces of retrieved context to answer the question.
-        If you don't know the answer, just say that you don't know.
-        Let's think step-by-step.<|eot_id|>
+        You are an AI assistant designed to provide accurate answers based on the official Kolon Benit IT Distribution Business White Paper. 
+        Please respond in Korean. 
+        Utilize the provided context to answer the question concisely and clearly. 
+        If the answer is not found in the context, say that you do not know, and suggest where to find relevant information if possible.
+        Ensure your response is structured logically and easy to understand.
+        Let's think step-by-step.
+        <|eot_id|>
         <|start_header_id|>user<|end_header_id|>
         Question: {query}
         Context: {context_str}
         {image_str}
         {table_str}
-        Answer: <|eot_id|><|start_header_id|>assistant<|end_header_id|>
+        Answer: 
+        <|eot_id|>
+        <|start_header_id|>assistant<|end_header_id|>
         """
         logger.debug(f"프롬프트: {prompt}")
 
